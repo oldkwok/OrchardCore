@@ -3,7 +3,7 @@ using Microsoft.Extensions.Options;
 using OrchardCore.DisplayManagement.Handlers;
 using OrchardCore.Email.Drivers;
 using OrchardCore.Email.Services;
-using OrchardCore.Environment.Navigation;
+using OrchardCore.Navigation;
 using OrchardCore.Modules;
 using OrchardCore.Security.Permissions;
 using OrchardCore.Settings;
@@ -18,7 +18,7 @@ namespace OrchardCore.Email
             services.AddScoped<IDisplayDriver<ISite>, SmtpSettingsDisplayDriver>();
             services.AddScoped<INavigationProvider, AdminMenu>();
 
-            services.AddScoped<IConfigureOptions<SmtpSettings>, SmtpSettingsConfiguration>();
+            services.AddTransient<IConfigureOptions<SmtpSettings>, SmtpSettingsConfiguration>();
             services.AddScoped<ISmtpService, SmtpService>();
         }
     }

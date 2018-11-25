@@ -107,6 +107,7 @@ namespace OrchardCore.Tests.OrchardCore.Queries
         [Theory]
         [InlineData("select a from b inner join c on b.b1 = c.c1", "SELECT [a] FROM [tp_b] INNER JOIN [tp_c] ON [tp_b].[b1] = [tp_c].[c1];")]
         [InlineData("select a from b as ba inner join c as ca on ba.b1 = ca.c1", "SELECT [a] FROM [tp_b] AS ba INNER JOIN [tp_c] AS ca ON ba.[b1] = ca.[c1];")]
+        [InlineData("select a from b inner join c on b.b1 = c.c1 left join d on d.a = d.b", "SELECT [a] FROM [tp_b] INNER JOIN [tp_c] ON [tp_b].[b1] = [tp_c].[c1] LEFT JOIN [tp_d] ON [tp_d].[a] = [tp_d].[b];")]
         public void ShouldParseJoinClause(string sql, string expectedSql)
         {
             var result = SqlParser.TryParse(sql, _defaultDialect, _defaultTablePrefix, null, out var rawQuery, out var messages);
@@ -168,7 +169,7 @@ namespace OrchardCore.Tests.OrchardCore.Queries
             var result = SqlParser.TryParse("SEL a", _defaultDialect, _defaultTablePrefix, null, out var rawQuery, out var messages);
 
             Assert.False(result);
-            Assert.Equal(1, messages.Count());
+            Assert.Single(messages);
             Assert.Contains("at line:0, col:0", messages.First());
         }
 
