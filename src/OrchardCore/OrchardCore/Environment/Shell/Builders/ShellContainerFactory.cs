@@ -1,35 +1,40 @@
 using System;
 using System.Linq;
-using Microsoft.AspNetCore.Hosting;
+using System.Reflection;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using OrchardCore.Environment.Extensions;
 using OrchardCore.Environment.Extensions.Features;
 using OrchardCore.Environment.Shell.Builders.Models;
+using OrchardCore.Environment.Shell.Configuration;
+using OrchardCore.Modules;
 
 namespace OrchardCore.Environment.Shell.Builders
 {
     public class ShellContainerFactory : IShellContainerFactory
     {
-        private readonly IFeatureInfo _applicationFeature;
+        private IFeatureInfo _applicationFeature;
+
+        private readonly IHostEnvironment _hostingEnvironment;
+        private readonly IExtensionManager _extensionManager;
         private readonly IServiceProvider _serviceProvider;
         private readonly ILogger _logger;
         private readonly ILoggerFactory _loggerFactory;
         private readonly IServiceCollection _applicationServices;
 
         public ShellContainerFactory(
-            IHostingEnvironment hostingEnvironment,
+            IHostEnvironment hostingEnvironment,
             IExtensionManager extensionManager,
             IServiceProvider serviceProvider,
             ILoggerFactory loggerFactory,
             ILogger<ShellContainerFactory> logger,
             IServiceCollection applicationServices)
         {
-            _applicationFeature = extensionManager.GetFeatures().FirstOrDefault(
-                f => f.Id == hostingEnvironment.ApplicationName);
-
+            _hostingEnvironment = hostingEnvironment;
+            _extensionManager = extensionManager;
             _applicationServices = applicationServices;
             _serviceProvider = serviceProvider;
             _loggerFactory = loggerFactory;
@@ -48,6 +53,13 @@ namespace OrchardCore.Environment.Shell.Builders
             var tenantServiceCollection = _serviceProvider.CreateChildContainer(_applicationServices);
 
             tenantServiceCollection.AddSingleton(settings);
+            tenantServiceCollection.AddSingleton<IShellConfiguration>(sp =>
+            {
+                // Resolve it lazily as it's constructed lazily
+                var shellSettings = sp.GetRequiredService<ShellSettings>();
+                return shellSettings.ShellConfiguration;
+            });
+
             tenantServiceCollection.AddSingleton(blueprint.Descriptor);
             tenantServiceCollection.AddSingleton(blueprint);
 
@@ -72,6 +84,12 @@ namespace OrchardCore.Environment.Shell.Builders
 
             // Make shell settings available to the modules
             moduleServiceCollection.AddSingleton(settings);
+            moduleServiceCollection.AddSingleton<IShellConfiguration>(sp =>
+            {
+                // Resolve it lazily as it's constructed lazily
+                var shellSettings = sp.GetRequiredService<ShellSettings>();
+                return shellSettings.ShellConfiguration;
+            });
 
             var moduleServiceProvider = moduleServiceCollection.BuildServiceProvider(true);
 
@@ -83,6 +101,10 @@ namespace OrchardCore.Environment.Shell.Builders
             // IStartup instances are ordered by module dependency with an Order of 0 by default.
             // OrderBy performs a stable sort so order is preserved among equal Order values.
             startups = startups.OrderBy(s => s.Order);
+
+            // To not trigger features loading before it is normally done by 'ShellHost',
+            // init here the application feature in place of doing it in the constructor.
+            EnsureApplicationFeature();
 
             // Let any module add custom service descriptors to the tenant
             foreach (var startup in startups)
@@ -97,7 +119,7 @@ namespace OrchardCore.Environment.Shell.Builders
             }
 
             (moduleServiceProvider as IDisposable).Dispose();
-            
+
             var shellServiceProvider = tenantServiceCollection.BuildServiceProvider(true);
 
             // Register all DIed types in ITypeFeatureProvider
@@ -107,22 +129,45 @@ namespace OrchardCore.Environment.Shell.Builders
             {
                 foreach (var serviceDescriptor in featureServiceCollection.Value)
                 {
-                    if (serviceDescriptor.ImplementationType != null)
+                    var type = serviceDescriptor.GetImplementationType();
+
+                    if (type != null)
                     {
-                        typeFeatureProvider.TryAdd(serviceDescriptor.ImplementationType, featureServiceCollection.Key);
-                    }
-                    else if (serviceDescriptor.ImplementationInstance != null)
-                    {
-                        typeFeatureProvider.TryAdd(serviceDescriptor.ImplementationInstance.GetType(), featureServiceCollection.Key);
-                    }
-                    else
-                    {
-                        // Factory, we can't know which type will be returned
+                        var feature = featureServiceCollection.Key;
+
+                        if (feature == _applicationFeature)
+                        {
+                            var attribute = type.GetCustomAttributes<FeatureAttribute>(false).FirstOrDefault();
+
+                            if (attribute != null)
+                            {
+                                feature = featureServiceCollection.Key.Extension.Features
+                                    .FirstOrDefault(f => f.Id == attribute.FeatureName)
+                                    ?? feature;
+                            }
+                        }
+
+                        typeFeatureProvider.TryAdd(type, feature);
                     }
                 }
             }
 
             return shellServiceProvider;
+        }
+
+        private void EnsureApplicationFeature()
+        {
+            if (_applicationFeature == null)
+            {
+                lock (this)
+                {
+                    if (_applicationFeature == null)
+                    {
+                        _applicationFeature = _extensionManager.GetFeatures()
+                            .FirstOrDefault(f => f.Id == _hostingEnvironment.ApplicationName);
+                    }
+                }
+            }
         }
     }
 }
